@@ -312,10 +312,27 @@ impl LsmStorageInner {
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         // release the lock in this inner block to prepare for calling
         // force_freeze_memtable later, that needs the write lock
-        {
+        let memtable_capacity_reached = {
             let guard = self.state.read();
-            guard.memtable.put(key, value)
+            guard.memtable.put(key, value)?;
+            guard.memtable.approximate_size() >= self.options.target_sst_size
+        };
+
+        if memtable_capacity_reached {
+            let state_lock = self.state_lock.lock();
+
+            // check if another thread has already frozen the memtable
+            let memtable_capacity_reached = {
+                let guard = self.state.read();
+                guard.memtable.approximate_size() >= self.options.target_sst_size
+            };
+
+            if memtable_capacity_reached {
+                self.force_freeze_memtable(&state_lock)?;
+            }
         }
+
+        Ok(())
     }
 
     /// Remove a key from the storage by writing an empty value.
@@ -345,7 +362,19 @@ impl LsmStorageInner {
 
     /// Force freeze the current memtable to an immutable memtable
     pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        unimplemented!()
+        let mut guard = self.state.write();
+
+        // use with WAL when it is implemented
+        //let id = self.next_sst_id();
+        //let memtable = Arc::new(MemTable::create_with_wal(id, self.path_of_wal(id))?);
+        let memtable = Arc::new(MemTable::create(self.next_sst_id()));
+
+        let mut snapshot = guard.as_ref().clone();
+        let old_memtable = std::mem::replace(&mut snapshot.memtable, memtable);
+        snapshot.imm_memtables.insert(0, old_memtable);
+        *guard = Arc::new(snapshot);
+
+        Ok(())
     }
 
     /// Force flush the earliest-created immutable memtable to disk
