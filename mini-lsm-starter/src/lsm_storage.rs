@@ -299,8 +299,12 @@ impl LsmStorageInner {
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         let guard = self.state.read();
-        // filter handles the tombstone (empty Bytes value) and returns None in that case
-        Ok(guard.memtable.get(key).filter(|value| !value.is_empty()))
+
+        let opt_val = std::iter::once(&guard.memtable)
+            .chain(guard.imm_memtables.iter())
+            .find_map(|memtable| memtable.get(key));
+
+        Ok(opt_val.filter(|value| !value.is_empty()))
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.

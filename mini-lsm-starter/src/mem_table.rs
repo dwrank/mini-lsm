@@ -101,8 +101,10 @@ impl MemTable {
     /// Week 2 Day 6: also append the data to the write-ahead log.
     /// Week 3 Day 5: route the write through the batch WAL implementation.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.map.insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
-        self.approximate_size.fetch_add(key.len() + value.len(), Ordering::Relaxed);
+        self.map
+            .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
+        self.approximate_size
+            .fetch_add(key.len() + value.len(), Ordering::Relaxed);
         Ok(())
     }
 
