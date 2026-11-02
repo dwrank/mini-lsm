@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::cmp::{self};
 use std::collections::BinaryHeap;
+use std::collections::binary_heap::PeekMut;
 
 use anyhow::Result;
 
@@ -59,7 +57,41 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut heap = BinaryHeap::new();
+
+        for (i, iter) in iters.into_iter().enumerate() {
+            if iter.is_valid() {
+                heap.push(HeapWrapper(i, iter));
+            }
+        }
+
+        let current = heap.pop();
+
+        MergeIterator {
+            iters: heap,
+            current,
+        }
+    }
+
+    fn skip_duplicate_keys(&mut self) -> Result<()> {
+        let Some(current) = self.current.as_ref() else {
+            return Ok(());
+        };
+
+        while let Some(mut inner) = self.iters.peek_mut() {
+            if inner.1.key() != current.1.key() {
+                break;
+            }
+
+            if let Err(e) = inner.1.next() {
+                PeekMut::pop(inner);
+                return Err(e);
+            } else if !inner.1.is_valid() {
+                PeekMut::pop(inner);
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -69,18 +101,54 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice<'_> {
-        unimplemented!()
+        self.current
+            .as_ref()
+            .map_or(KeySlice::from_slice(b""), |heap_wrapper| {
+                heap_wrapper.1.key()
+            })
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.current
+            .as_ref()
+            .map_or(b"", |heap_wrapper| heap_wrapper.1.value())
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.current
+            .as_ref()
+            .is_some_and(|heap_wrapper| heap_wrapper.1.is_valid())
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        if let Err(e) = self.skip_duplicate_keys() {
+            self.current = None;
+            return Err(e);
+        }
+
+        let Some(mut current) = self.current.take() else {
+            return Ok(());
+        };
+
+        current.1.next()?;
+
+        if current.1.is_valid() {
+            if let Some(mut top) = self.iters.peek_mut() {
+                // because the Ord impl calls .reverse, > means comes first not bigger key.
+                // peek_mut() gives a PeekMut guard that wraps and derefs to HeapWrapper<I>.
+                // After swapping top and current, the heap's top slot holds the old current
+                // which may be out of order.  When the top guard is dropped, PeekMut::drop
+                // notices &mut access was taken to the top, and sifts that element down to
+                // the correct position.
+                if *top > current {
+                    std::mem::swap(&mut *top, &mut current);
+                }
+            }
+            self.current = Some(current);
+        } else {
+            self.current = self.iters.pop();
+        }
+
+        Ok(())
     }
 }
