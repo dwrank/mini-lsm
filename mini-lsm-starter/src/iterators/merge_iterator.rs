@@ -73,6 +73,16 @@ impl<I: StorageIterator> MergeIterator<I> {
         }
     }
 
+    // Skips duplicate keys
+    // If the next key on the binary heap is the same as the current key,
+    // then the iterator holding that (key, value) is skipped by calling
+    // next.  The result is that the next key returned from the binary heap
+    // comes after current's key.
+    //
+    // If a binary heap's iterator's next call returns an Err, then that
+    // iterator is popped and the Err is returned.
+    // If the iterator has reached it's end, then it is popped.
+    // If current is none, then the end is reached and Ok is returned.
     fn skip_duplicate_keys(&mut self) -> Result<()> {
         let Some(current) = self.current.as_ref() else {
             return Ok(());
@@ -120,6 +130,16 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
             .is_some_and(|heap_wrapper| heap_wrapper.1.is_valid())
     }
 
+    // Moves current's iter to the next (key, value) iterator.
+    // There may initially be duplicate keys on the binary heap,
+    // so first off those are removed.
+    // If current is None then the end is reached and Ok is returned.
+    // If current is not None then next is called on it's iter.  If
+    // next returns an Err then the Err is returned.
+    // If current's iter is not valid after next is called, then it is
+    // discarded and the next iter from the binary heap takes it's place.
+    // If current's iter is valid, then a comparison is made with the top
+    // of the binary heap to determine the new current.
     fn next(&mut self) -> Result<()> {
         if let Err(e) = self.skip_duplicate_keys() {
             self.current = None;
