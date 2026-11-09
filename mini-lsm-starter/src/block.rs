@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 mod builder;
 mod iterator;
+
+use bytes::{Buf, BufMut, BytesMut};
 
 pub use builder::BlockBuilder;
 use bytes::Bytes;
@@ -32,11 +31,42 @@ impl Block {
     /// Encode the internal data to the data layout illustrated in the course
     /// Note: You may want to recheck if any of the expected field is missing from your output
     pub fn encode(&self) -> Bytes {
-        unimplemented!()
+        let mut buf = BytesMut::new();
+
+        buf.extend_from_slice(&self.data);
+
+        for &offset in self.offsets.iter() {
+            buf.put_u16(offset);
+        }
+
+        buf.put_u16(self.offsets.len() as u16);
+
+        buf.into()
     }
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
     pub fn decode(data: &[u8]) -> Self {
-        unimplemented!()
+        let len = data.len();
+        assert!(len >= 2, "block too short: {len} bytes");
+
+        let bytes: [u8; 2] = data[len - 2..].try_into().unwrap();
+        let num_elems = u16::from_be_bytes(bytes) as usize;
+        // 2 bytes for number of elements + for each element:
+        // 2 for offset, 2 for key len, 2 for value len
+        let min_block_size = 2 + 6 * num_elems;
+        assert!(
+            len >= min_block_size,
+            "corrupted block: block len is {len}, {num_elems} entries need at least {min_block_size} bytes"
+        );
+
+        let offset_start = len - num_elems * 2 - 2;
+
+        Self {
+            data: data[..offset_start].to_vec(),
+            offsets: data[offset_start..len - 2]
+                .chunks(2)
+                .map(|mut chunk| chunk.get_u16())
+                .collect(),
+        }
     }
 }
